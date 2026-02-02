@@ -38,11 +38,9 @@ export class Minimap implements UIObject {
 
   @bound
   onMouseMove(e?: { x: number; y: number }) {
+    // 마우스 위치만 저장 (화면 이동은 클릭 시에만)
     if (!e) {
       this.mousePosition = null;
-      if (this._onViewportChangeHandler) {
-        this._onViewportChangeHandler();
-      }
       return;
     }
     if (!this.lastParams) return;
@@ -50,10 +48,21 @@ export class Minimap implements UIObject {
       x: e.x,
       y: e.y,
     };
+  }
+
+  @bound
+  onMouseDown(e?: { x: number; y: number }) {
+    if (!e) {
+      if (this._onViewportChangeHandler) {
+        this._onViewportChangeHandler();
+      }
+      return;
+    }
+    if (!this.lastParams) return;
     if (this._onViewportChangeHandler) {
       this._onViewportChangeHandler({
-        x: this.mousePosition.x / 4,
-        y: this.mousePosition.y / 4,
+        x: e.x / 4,
+        y: e.y / 4,
       });
     }
   }

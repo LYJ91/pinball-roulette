@@ -48,8 +48,56 @@
   gtag('config', 'G-5899C1DJM0');
 
   function getNames() {
-    const value = document.querySelector('#in_names').value.trim();
-    return value.split(/[,\r\n]/g).map(v => v.trim()).filter(v => !!v);
+    const blocks = document.querySelectorAll('#names-container .name-block');
+    return Array.from(blocks).map(block => block.dataset.name).filter(v => !!v);
+  }
+
+  // 이름 블록 생성
+  function createNameBlock(name) {
+    const block = document.createElement('div');
+    block.className = 'name-block';
+    block.dataset.name = name;
+    
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'block-name';
+    nameSpan.textContent = name;
+    
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'block-remove';
+    removeBtn.innerHTML = '×';
+    removeBtn.addEventListener('click', () => {
+      block.remove();
+      saveNamesToStorage();
+      getReady();
+    });
+    
+    block.appendChild(nameSpan);
+    block.appendChild(removeBtn);
+    return block;
+  }
+
+  // 이름 블록 추가
+  function addNameBlock(name) {
+    const container = document.querySelector('#names-container');
+    const block = createNameBlock(name);
+    container.appendChild(block);
+  }
+
+  // 저장소에 이름 저장
+  function saveNamesToStorage() {
+    const names = getNames();
+    localStorage.setItem('mbr_names', names.join(','));
+  }
+
+  // 저장소에서 이름 불러오기
+  function loadNamesFromStorage(namesStr) {
+    const container = document.querySelector('#names-container');
+    container.innerHTML = '';
+    
+    if (!namesStr) return;
+    
+    const names = namesStr.split(/[,\r\n]/g).map(v => v.trim()).filter(v => !!v);
+    names.forEach(name => addNameBlock(name));
   }
 
   function parseName(nameStr) {
@@ -123,46 +171,42 @@
     const namesFromUrl = urlParams.get('names');
 
     if (namesFromUrl) {
-      document.querySelector('#in_names').value = namesFromUrl.replace(/,/g, '\n');
+      loadNamesFromStorage(namesFromUrl);
     } else {
       const savedNames = localStorage.getItem('mbr_names');
       if (savedNames) {
-        document.querySelector('#in_names').value = savedNames;
+        loadNamesFromStorage(savedNames);
       }
     }
-    document.querySelector('#in_names').addEventListener('input', () => {
+
+    // 이름 입력 필드에서 Enter 키로 추가
+    document.querySelector('#name-add-input').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        const input = e.target;
+        const value = input.value.trim();
+        if (value) {
+          // 쉼표로 구분된 여러 이름 처리
+          const names = value.split(/[,\r\n]/g).map(v => v.trim()).filter(v => !!v);
+          names.forEach(name => addNameBlock(name));
+          input.value = '';
+          saveNamesToStorage();
+          getReady();
+        }
+      }
+    });
+
+    // 전체 삭제 버튼
+    document.querySelector('#clear-all-names').addEventListener('click', () => {
+      document.querySelector('#names-container').innerHTML = '';
+      saveNamesToStorage();
       getReady();
     });
 
-    document.querySelector('#in_names').addEventListener('blur', () => {
-      const nameSource = getNames();
-      const nameSet = new Set();
-      const nameCounts = {};
-      nameSource.forEach(nameSrc => {
-        const name = parseName(nameSrc);
-        const key = name.weight > 1 ? `${name.name}/${name.weight}` : name.name;
-        if (!nameSet.has(key)) {
-          nameSet.add(key);
-          nameCounts[key] = 0;
-        }
-        nameCounts[key] += name.count;
-      });
-      const result = [];
-      Object.keys(nameCounts).forEach(key => {
-        if (nameCounts[key] > 1) {
-          result.push(`${key}*${nameCounts[key]}`);
-        } else {
-          result.push(key);
-        }
-      });
-
-      const oldValue = document.querySelector('#in_names').value;
-      const newValue = result.join(',');
-
-      if (oldValue !== newValue) {
-        document.querySelector('#in_names').value = newValue;
-        getReady();
-      }
+    // 리셋 버튼 - 모든 이름 블록 삭제
+    document.querySelector('#btnReset').addEventListener('click', () => {
+      document.querySelector('#names-container').innerHTML = '';
+      saveNamesToStorage();
+      getReady();
     });
 
     document.querySelector('#btnShuffle').addEventListener('click', () => {
@@ -299,7 +343,780 @@
       }
     };
 
-    checkNotice();
+    // checkNotice(); // 노티스 팝업 비활성화
+
+    // ========== 커스텀 모달 시스템 ==========
+    const modal = {
+      element: null,
+      titleEl: null,
+      messageEl: null,
+      inputArea: null,
+      inputEl: null,
+      confirmBtn: null,
+      cancelBtn: null,
+      currentResolve: null,
+
+      init() {
+        this.element = document.querySelector('#custom-modal');
+        this.titleEl = document.querySelector('#modal-title');
+        this.messageEl = document.querySelector('#modal-message');
+        this.inputArea = document.querySelector('#modal-input-area');
+        this.inputEl = document.querySelector('#modal-input');
+        this.confirmBtn = document.querySelector('#modal-confirm-btn');
+        this.cancelBtn = document.querySelector('#modal-cancel-btn');
+
+        this.confirmBtn.addEventListener('click', () => this.handleConfirm());
+        this.cancelBtn.addEventListener('click', () => this.handleCancel());
+        this.element.querySelector('.modal-backdrop').addEventListener('click', () => this.handleCancel());
+        this.inputEl.addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') this.handleConfirm();
+        });
+      },
+
+      show(type, title, message, defaultValue = '') {
+        return new Promise((resolve) => {
+          this.currentResolve = resolve;
+          this.titleEl.textContent = title;
+          this.messageEl.textContent = message;
+
+          // 타입별 설정
+          if (type === 'alert') {
+            this.inputArea.style.display = 'none';
+            this.cancelBtn.style.display = 'none';
+          } else if (type === 'confirm') {
+            this.inputArea.style.display = 'none';
+            this.cancelBtn.style.display = 'block';
+          } else if (type === 'prompt') {
+            this.inputArea.style.display = 'block';
+            this.cancelBtn.style.display = 'block';
+            this.inputEl.value = defaultValue;
+            setTimeout(() => this.inputEl.focus(), 100);
+          }
+
+          this.element.classList.add('show');
+        });
+      },
+
+      handleConfirm() {
+        const isPrompt = this.inputArea.style.display !== 'none';
+        const value = isPrompt ? this.inputEl.value : true;
+        this.element.classList.remove('show');
+        if (this.currentResolve) {
+          this.currentResolve(value);
+          this.currentResolve = null;
+        }
+      },
+
+      handleCancel() {
+        this.element.classList.remove('show');
+        if (this.currentResolve) {
+          this.currentResolve(null);
+          this.currentResolve = null;
+        }
+      },
+
+      alert(message, title = '알림') {
+        return this.show('alert', title, message);
+      },
+
+      confirm(message, title = '확인') {
+        return this.show('confirm', title, message);
+      },
+
+      prompt(message, defaultValue = '', title = '입력') {
+        return this.show('prompt', title, message, defaultValue);
+      }
+    };
+
+    // ========== 학생 관리 패널 기능 ==========
+    const STUDENT_DATA_KEY = 'mbr_student_data';
+    
+    // 기본 데이터 구조
+    function getDefaultData() {
+      return {
+        classes: [],
+        parts: [
+          { name: '파트 A', min: 1, max: 15 },
+          { name: '파트 B', min: 16, max: 30 },
+          { name: '파트 C', min: 31, max: 50 }
+        ],
+        expandedClassIndices: [],  // 펼쳐진 반들의 인덱스 배열
+        addToClassIndex: -1        // 학생 추가할 반 인덱스
+      };
+    }
+
+    // 데이터 로드
+    function loadData() {
+      const saved = localStorage.getItem(STUDENT_DATA_KEY);
+      if (saved) {
+        const data = JSON.parse(saved);
+        if (!data.parts) data.parts = getDefaultData().parts;
+        if (!data.classes) data.classes = [];
+        // 이전 데이터 구조 호환
+        if (!data.expandedClassIndices) {
+          data.expandedClassIndices = data.selectedClassIndex >= 0 ? [data.selectedClassIndex] : [];
+        }
+        if (data.addToClassIndex === undefined) data.addToClassIndex = -1;
+        return data;
+      }
+      return getDefaultData();
+    }
+
+    // 데이터 저장
+    function saveData(data) {
+      localStorage.setItem(STUDENT_DATA_KEY, JSON.stringify(data));
+    }
+
+    // 이름을 입력란에 추가 (블록 방식)
+    function addNameToInput(name) {
+      addNameBlock(name);
+      saveNamesToStorage();
+      getReady();
+    }
+
+    // 여러 이름을 입력란에 추가 (블록 방식)
+    function addNamesToInput(names) {
+      names.forEach(name => addNameBlock(name));
+      saveNamesToStorage();
+      getReady();
+    }
+
+    // 학생이 속한 파트 찾기
+    function findPartForValue(value, parts) {
+      for (let i = 0; i < parts.length; i++) {
+        if (value >= parts[i].min && value <= parts[i].max) {
+          return i;
+        }
+      }
+      return -1;
+    }
+
+    // 반 선택 드롭다운 렌더링
+    function renderClassSelect() {
+      const data = loadData();
+      const select = document.querySelector('#student-class-select');
+      select.innerHTML = '<option value="">-- 반 선택 --</option>';
+      
+      data.classes.forEach((cls, index) => {
+        const option = document.createElement('option');
+        option.value = index;
+        option.textContent = cls.name;
+        if (index === data.addToClassIndex) {
+          option.selected = true;
+        }
+        select.appendChild(option);
+      });
+    }
+
+    // 반 관리 탭: 아코디언 스타일 반별 목록
+    function renderStudentsList() {
+      const data = loadData();
+      const container = document.querySelector('#students-list');
+      container.innerHTML = '';
+
+      // 반 선택 드롭다운도 업데이트
+      renderClassSelect();
+
+      if (data.classes.length === 0) {
+        container.innerHTML = '<div class="no-class-selected">반을 추가해주세요</div>';
+        return;
+      }
+
+      // 각 반을 아코디언으로 렌더링
+      data.classes.forEach((cls, classIndex) => {
+        const students = cls.students || [];
+        const isExpanded = data.expandedClassIndices.includes(classIndex);
+        
+        const classAccordion = document.createElement('div');
+        classAccordion.className = `class-accordion ${isExpanded ? 'expanded' : ''}`;
+        
+        // 반 헤더 (클릭하여 펼침/접힘)
+        const header = document.createElement('div');
+        header.className = 'class-accordion-header';
+        header.innerHTML = `
+          <span class="accordion-icon">${isExpanded ? '▼' : '▶'}</span>
+          <span class="class-name">${cls.name}</span>
+          <span class="student-count">${students.length}명</span>
+          <button class="delete-class-btn" title="반 삭제">×</button>
+        `;
+        
+        // 헤더 클릭 시 펼침/접힘 (토글)
+        header.addEventListener('click', (e) => {
+          if (e.target.classList.contains('delete-class-btn')) return;
+          
+          const data = loadData();
+          const idx = data.expandedClassIndices.indexOf(classIndex);
+          if (idx >= 0) {
+            data.expandedClassIndices.splice(idx, 1); // 이미 열려있으면 닫기
+          } else {
+            data.expandedClassIndices.push(classIndex); // 열기
+          }
+          saveData(data);
+          renderStudentsList();
+        });
+        
+        // 반 삭제 버튼
+        header.querySelector('.delete-class-btn').addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const confirmed = await modal.confirm(`"${cls.name}" 반을 삭제하시겠습니까?\n모든 학생 데이터가 삭제됩니다.`, '반 삭제');
+          if (!confirmed) return;
+          
+          const data = loadData();
+          data.classes.splice(classIndex, 1);
+          // 펼쳐진 인덱스 정리
+          data.expandedClassIndices = data.expandedClassIndices
+            .filter(i => i !== classIndex)
+            .map(i => i > classIndex ? i - 1 : i);
+          // 추가할 반 인덱스 정리
+          if (data.addToClassIndex === classIndex) {
+            data.addToClassIndex = -1;
+          } else if (data.addToClassIndex > classIndex) {
+            data.addToClassIndex--;
+          }
+          saveData(data);
+          renderStudentsList();
+          renderStudentsByParts();
+        });
+
+        classAccordion.appendChild(header);
+
+        // 학생 목록 (펼쳐진 경우에만)
+        if (isExpanded) {
+          const content = document.createElement('div');
+          content.className = 'class-accordion-content';
+          
+          if (students.length === 0) {
+            content.innerHTML = '<div class="no-students">등록된 학생이 없습니다</div>';
+          } else {
+            const listDiv = document.createElement('div');
+            listDiv.className = 'simple-student-list';
+
+            students.forEach((student, studentIndex) => {
+              const studentItem = document.createElement('div');
+              studentItem.className = 'student-item';
+              studentItem.innerHTML = `
+                <span class="student-name">${student.name}</span>
+                <span class="student-value" data-value="${student.value}" title="클릭하여 숫자 수정">${student.value}</span>
+                <button class="add-one-btn" title="입력란에 추가">+</button>
+                <button class="edit-btn" title="이름 수정">✎</button>
+                <button class="delete-btn" title="삭제">×</button>
+              `;
+
+              // 숫자 인라인 편집
+              const valueSpan = studentItem.querySelector('.student-value');
+              valueSpan.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const originalValue = valueSpan.dataset.value;
+                
+                if (valueSpan.querySelector('input')) return;
+                
+                let saved = false;  // 저장 여부 플래그
+                
+                const input = document.createElement('input');
+                input.type = 'number';
+                input.className = 'inline-value-input';
+                input.value = '';
+                input.placeholder = originalValue;
+                
+                valueSpan.textContent = '';
+                valueSpan.appendChild(input);
+                input.focus();
+                
+                const saveValue = () => {
+                  if (saved) return;
+                  const newValue = parseInt(input.value);
+                  if (!isNaN(newValue)) {
+                    saved = true;
+                    const data = loadData();
+                    data.classes[classIndex].students[studentIndex].value = newValue;
+                    saveData(data);
+                    renderStudentsList();
+                    renderStudentsByParts();
+                  } else {
+                    valueSpan.textContent = originalValue;
+                    valueSpan.dataset.value = originalValue;
+                  }
+                };
+                
+                input.addEventListener('keypress', (ev) => {
+                  if (ev.key === 'Enter') {
+                    saveValue();
+                  }
+                });
+                
+                input.addEventListener('keydown', (ev) => {
+                  if (ev.key === 'Escape') {
+                    saved = true;  // blur에서 복원 안되게
+                    valueSpan.textContent = originalValue;
+                    valueSpan.dataset.value = originalValue;
+                  }
+                });
+                
+                input.addEventListener('blur', () => {
+                  if (!saved) {
+                    valueSpan.textContent = originalValue;
+                    valueSpan.dataset.value = originalValue;
+                  }
+                });
+              });
+
+              // 개별 추가
+              studentItem.querySelector('.add-one-btn').addEventListener('click', () => {
+                addNameToInput(student.name);
+              });
+
+              // 이름 수정
+              studentItem.querySelector('.edit-btn').addEventListener('click', async () => {
+                const newName = await modal.prompt('이름을 입력하세요:', student.name, '이름 수정');
+                if (newName === null || !newName.trim()) return;
+                
+                const data = loadData();
+                data.classes[classIndex].students[studentIndex].name = newName.trim();
+                saveData(data);
+                renderStudentsList();
+                renderStudentsByParts();
+              });
+
+              // 삭제
+              studentItem.querySelector('.delete-btn').addEventListener('click', async () => {
+                const confirmed = await modal.confirm(`"${student.name}"을(를) 삭제하시겠습니까?`, '학생 삭제');
+                if (!confirmed) return;
+                
+                const data = loadData();
+                data.classes[classIndex].students.splice(studentIndex, 1);
+                saveData(data);
+                renderStudentsList();
+                renderStudentsByParts();
+              });
+
+              listDiv.appendChild(studentItem);
+            });
+
+            content.appendChild(listDiv);
+          }
+
+          classAccordion.appendChild(content);
+        }
+
+        container.appendChild(classAccordion);
+      });
+    }
+
+    // 파트 설정 탭: 모든 반의 학생을 파트별로 분류 표시
+    function renderStudentsByParts() {
+      const data = loadData();
+      const container = document.querySelector('#students-by-parts');
+      container.innerHTML = '';
+
+      // 모든 반에서 학생 수집 (반 인덱스와 학생 인덱스 포함)
+      const allStudents = [];
+      data.classes.forEach((cls, classIndex) => {
+        (cls.students || []).forEach((student, studentIndex) => {
+          allStudents.push({ ...student, className: cls.name, classIndex, studentIndex });
+        });
+      });
+
+      if (allStudents.length === 0) {
+        container.innerHTML = '<div class="no-class-selected">등록된 학생이 없습니다</div>';
+        return;
+      }
+
+      // 파트별로 학생 분류
+      const partGroups = {};
+      const unclassified = [];
+
+      data.parts.forEach((part, idx) => {
+        partGroups[idx] = { part, students: [] };
+      });
+
+      allStudents.forEach(student => {
+        const partIndex = findPartForValue(student.value, data.parts);
+        if (partIndex >= 0) {
+          partGroups[partIndex].students.push(student);
+        } else {
+          unclassified.push(student);
+        }
+      });
+
+      // 각 파트 렌더링
+      Object.keys(partGroups).forEach(partIdx => {
+        const group = partGroups[partIdx];
+        const partDiv = document.createElement('div');
+        partDiv.className = 'part-group';
+        
+        const header = document.createElement('div');
+        header.className = 'part-header';
+        header.innerHTML = `
+          <span class="part-title">${group.part.name} (${group.part.min}~${group.part.max})</span>
+          <span class="part-count">${group.students.length}명</span>
+          <button class="add-part-to-input" title="이 파트 전체 추가">▶</button>
+        `;
+        
+        // 파트 전체 추가 버튼
+        header.querySelector('.add-part-to-input').addEventListener('click', async () => {
+          const names = group.students.map(s => s.name);
+          if (names.length > 0) {
+            addNamesToInput(names);
+          } else {
+            await modal.alert('이 파트에 학생이 없습니다.');
+          }
+        });
+
+        partDiv.appendChild(header);
+
+        // 학생 목록
+        const studentList = document.createElement('div');
+        studentList.className = 'student-list';
+        
+        group.students.forEach(student => {
+          const studentItem = document.createElement('div');
+          studentItem.className = 'student-item';
+          studentItem.innerHTML = `
+            <span class="student-name">${student.name}</span>
+            <span class="student-value" data-value="${student.value}" data-class-index="${student.classIndex}" data-student-index="${student.studentIndex}" title="클릭하여 숫자 수정">${student.value}</span>
+            <button class="add-one-btn" title="추가">+</button>
+          `;
+
+          // 숫자 인라인 편집
+          const valueSpan = studentItem.querySelector('.student-value');
+          valueSpan.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const originalValue = valueSpan.dataset.value;
+            const classIdx = parseInt(valueSpan.dataset.classIndex);
+            const studentIdx = parseInt(valueSpan.dataset.studentIndex);
+            
+            if (valueSpan.querySelector('input')) return;
+            
+            let saved = false;  // 저장 여부 플래그
+            
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.className = 'inline-value-input';
+            input.value = '';
+            input.placeholder = originalValue;
+            
+            valueSpan.textContent = '';
+            valueSpan.appendChild(input);
+            input.focus();
+            
+            const saveValue = () => {
+              if (saved) return;
+              const newValue = parseInt(input.value);
+              if (!isNaN(newValue)) {
+                saved = true;
+                const data = loadData();
+                data.classes[classIdx].students[studentIdx].value = newValue;
+                saveData(data);
+                renderStudentsList();
+                renderStudentsByParts();
+              } else {
+                valueSpan.textContent = originalValue;
+                valueSpan.dataset.value = originalValue;
+              }
+            };
+            
+            input.addEventListener('keypress', (ev) => {
+              if (ev.key === 'Enter') {
+                saveValue();
+              }
+            });
+            
+            input.addEventListener('keydown', (ev) => {
+              if (ev.key === 'Escape') {
+                saved = true;  // blur에서 복원 안되게
+                valueSpan.textContent = originalValue;
+                valueSpan.dataset.value = originalValue;
+              }
+            });
+            
+            input.addEventListener('blur', () => {
+              if (!saved) {
+                valueSpan.textContent = originalValue;
+                valueSpan.dataset.value = originalValue;
+              }
+            });
+          });
+
+          studentItem.querySelector('.add-one-btn').addEventListener('click', () => {
+            addNameToInput(student.name);
+          });
+
+          studentList.appendChild(studentItem);
+        });
+
+        partDiv.appendChild(studentList);
+        container.appendChild(partDiv);
+      });
+
+      // 미분류 학생
+      if (unclassified.length > 0) {
+        const unclassifiedDiv = document.createElement('div');
+        unclassifiedDiv.className = 'part-group unclassified';
+        
+        const header = document.createElement('div');
+        header.className = 'part-header';
+        header.innerHTML = `
+          <span class="part-title">미분류</span>
+          <span class="part-count">${unclassified.length}명</span>
+          <button class="add-part-to-input" title="미분류 전체 추가">▶</button>
+        `;
+        
+        header.querySelector('.add-part-to-input').addEventListener('click', () => {
+          addNamesToInput(unclassified.map(s => s.name));
+        });
+
+        unclassifiedDiv.appendChild(header);
+
+        const studentList = document.createElement('div');
+        studentList.className = 'student-list';
+        
+        unclassified.forEach(student => {
+          const studentItem = document.createElement('div');
+          studentItem.className = 'student-item';
+          studentItem.innerHTML = `
+            <span class="student-name">${student.name}</span>
+            <span class="student-value" data-value="${student.value}" data-class-index="${student.classIndex}" data-student-index="${student.studentIndex}" title="클릭하여 숫자 수정">${student.value}</span>
+            <button class="add-one-btn" title="추가">+</button>
+          `;
+
+          // 숫자 인라인 편집
+          const valueSpan = studentItem.querySelector('.student-value');
+          valueSpan.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const originalValue = valueSpan.dataset.value;
+            const classIdx = parseInt(valueSpan.dataset.classIndex);
+            const studentIdx = parseInt(valueSpan.dataset.studentIndex);
+            
+            if (valueSpan.querySelector('input')) return;
+            
+            let saved = false;
+            
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.className = 'inline-value-input';
+            input.value = '';
+            input.placeholder = originalValue;
+            
+            valueSpan.textContent = '';
+            valueSpan.appendChild(input);
+            input.focus();
+            
+            const saveValue = () => {
+              if (saved) return;
+              const newValue = parseInt(input.value);
+              if (!isNaN(newValue)) {
+                saved = true;
+                const data = loadData();
+                data.classes[classIdx].students[studentIdx].value = newValue;
+                saveData(data);
+                renderStudentsList();
+                renderStudentsByParts();
+              } else {
+                valueSpan.textContent = originalValue;
+                valueSpan.dataset.value = originalValue;
+              }
+            };
+            
+            input.addEventListener('keypress', (ev) => {
+              if (ev.key === 'Enter') {
+                saveValue();
+              }
+            });
+            
+            input.addEventListener('keydown', (ev) => {
+              if (ev.key === 'Escape') {
+                saved = true;
+                valueSpan.textContent = originalValue;
+                valueSpan.dataset.value = originalValue;
+              }
+            });
+            
+            input.addEventListener('blur', () => {
+              if (!saved) {
+                valueSpan.textContent = originalValue;
+                valueSpan.dataset.value = originalValue;
+              }
+            });
+          });
+
+          studentItem.querySelector('.add-one-btn').addEventListener('click', () => {
+            addNameToInput(student.name);
+          });
+          studentList.appendChild(studentItem);
+        });
+        
+        unclassifiedDiv.appendChild(studentList);
+        container.appendChild(unclassifiedDiv);
+      }
+    }
+
+    // 파트 설정 렌더링
+    function renderParts() {
+      const data = loadData();
+      const container = document.querySelector('#parts-list');
+      container.innerHTML = '';
+
+      data.parts.forEach((part, index) => {
+        const partItem = document.createElement('div');
+        partItem.className = 'part-config-item';
+        partItem.innerHTML = `
+          <input type="text" class="part-name-input" value="${part.name}" placeholder="파트명" />
+          <input type="number" class="part-min-input" value="${part.min}" min="0" max="50" />
+          <span>~</span>
+          <input type="number" class="part-max-input" value="${part.max}" min="0" max="50" />
+          <button class="save-part-btn" title="저장">💾</button>
+          <button class="delete-part-btn" title="삭제">×</button>
+        `;
+
+        // 파트 저장 함수
+        const savePart = async () => {
+          const name = partItem.querySelector('.part-name-input').value.trim();
+          const min = parseInt(partItem.querySelector('.part-min-input').value) || 0;
+          const max = parseInt(partItem.querySelector('.part-max-input').value) || 0;
+          
+          const data = loadData();
+          data.parts[index] = { name, min, max };
+          saveData(data);
+          renderParts();
+          renderStudentsByParts();
+        };
+
+        // 파트 저장 버튼
+        partItem.querySelector('.save-part-btn').addEventListener('click', savePart);
+
+        // Enter 키로 저장
+        partItem.querySelectorAll('input').forEach(input => {
+          input.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+              savePart();
+            }
+          });
+        });
+
+        // 파트 삭제
+        partItem.querySelector('.delete-part-btn').addEventListener('click', async () => {
+          const confirmed = await modal.confirm(`"${part.name}" 파트를 삭제하시겠습니까?`, '파트 삭제');
+          if (!confirmed) return;
+          
+          const data = loadData();
+          data.parts.splice(index, 1);
+          saveData(data);
+          renderParts();
+          renderStudentsByParts();
+        });
+
+        container.appendChild(partItem);
+      });
+    }
+
+    // 패널 초기화
+    function initStudentPanel() {
+      // 모달 초기화
+      modal.init();
+
+      // 패널 토글
+      document.querySelector('#panel-toggle').addEventListener('click', () => {
+        document.querySelector('#student-panel').classList.toggle('collapsed');
+      });
+
+      // 탭 전환
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+          document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+          btn.classList.add('active');
+          document.querySelector(`#${btn.dataset.tab}`).classList.add('active');
+        });
+      });
+
+      // 반 추가
+      document.querySelector('#add-class-btn').addEventListener('click', async () => {
+        const name = await modal.prompt('반 이름을 입력하세요:', '', '반 추가');
+        if (!name || !name.trim()) return;
+        
+        const data = loadData();
+        const newIndex = data.classes.length;
+        data.classes.push({ name: name.trim(), students: [] });
+        data.expandedClassIndices.push(newIndex);  // 새 반 자동 펼침
+        data.addToClassIndex = newIndex;  // 새 반을 추가 대상으로 선택
+        saveData(data);
+        renderStudentsList();
+        renderStudentsByParts();
+      });
+
+      // 반 선택 드롭다운 변경
+      document.querySelector('#student-class-select').addEventListener('change', (e) => {
+        const data = loadData();
+        data.addToClassIndex = e.target.value === '' ? -1 : parseInt(e.target.value);
+        saveData(data);
+      });
+
+      // 학생 추가
+      document.querySelector('#add-student-btn').addEventListener('click', async () => {
+        const data = loadData();
+        const classSelect = document.querySelector('#student-class-select');
+        const selectedClassIndex = classSelect.value === '' ? -1 : parseInt(classSelect.value);
+        
+        if (selectedClassIndex < 0) {
+          await modal.alert('학생을 추가할 반을 선택해주세요.');
+          return;
+        }
+
+        const nameInput = document.querySelector('#student-name-input');
+        const valueInput = document.querySelector('#student-value-input');
+        const name = nameInput.value.trim();
+        const value = parseInt(valueInput.value) || 0;
+
+        if (!name) {
+          await modal.alert('이름을 입력해주세요.');
+          return;
+        }
+
+        data.classes[selectedClassIndex].students.push({ name, value });
+        // 해당 반이 펼쳐져 있지 않으면 펼치기
+        if (!data.expandedClassIndices.includes(selectedClassIndex)) {
+          data.expandedClassIndices.push(selectedClassIndex);
+        }
+        saveData(data);
+        nameInput.value = '';
+        valueInput.value = '';
+        renderStudentsList();
+        renderStudentsByParts();
+      });
+
+      // Enter 키로 학생 추가
+      document.querySelector('#student-name-input').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          document.querySelector('#add-student-btn').click();
+        }
+      });
+      document.querySelector('#student-value-input').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          document.querySelector('#add-student-btn').click();
+        }
+      });
+
+      // 파트 추가
+      document.querySelector('#add-part-btn').addEventListener('click', () => {
+        const data = loadData();
+        const lastPart = data.parts[data.parts.length - 1];
+        const newMin = lastPart ? lastPart.max + 1 : 1;
+        const newMax = Math.min(newMin + 10, 50);
+        
+        data.parts.push({ name: `파트 ${data.parts.length + 1}`, min: newMin, max: newMax });
+        saveData(data);
+        renderParts();
+        renderStudentsByParts();
+      });
+
+      // 초기 렌더링
+      renderStudentsList();
+      renderStudentsByParts();
+      renderParts();
+    }
+
+    // 패널 초기화
+    initStudentPanel();
   }
 </script>
 <div id="settings" class="settings">
@@ -344,12 +1161,22 @@
   </div>
   <div class="left">
     <h3 data-trans>Enter names below</h3>
-    <textarea id="in_names" placeholder="Input names separated by commas or line feed here" data-trans="placeholder">짱구*5, 짱아*10, 봉미선*3</textarea>
+    <div id="names-container" class="names-block-container">
+      <!-- 이름 블록들이 여기에 추가됩니다 -->
+    </div>
+    <div class="name-input-row">
+      <input type="text" id="name-add-input" placeholder="이름 입력 후 Enter" />
+      <button id="clear-all-names" class="clear-all-btn" title="전체 삭제">🗑</button>
+    </div>
     <div class="actions">
       <button id="btnNotice">
         <i class="icon megaphone"></i>
       </button>
       <div class="sep"></div>
+      <button id="btnReset" title="모든 이름 삭제">
+        <i class="icon reset"></i>
+        <span>리셋</span>
+      </button>
       <button id="btnShuffle">
         <i class="icon shuffle"></i>
         <span data-trans>Shuffle</span>
@@ -361,12 +1188,6 @@
     </div>
   </div>
 </div>
-<div id="donate">
-  <script type="text/javascript" src="https://cdnjs.buymeacoffee.com/1.0.0/button.prod.min.js"
-          data-name="bmc-button" data-slug="lazygyu" data-color="#FFDD00" data-emoji=""
-          data-font="Comic" data-text="Buy me a coffee" data-outline-color="#000000" data-font-color="#000000"
-          data-coffee-color="#ffffff"></script>
-</div>
 <div id="notice">
   <h1>Notice</h1>
   <div class="notice-body">
@@ -377,6 +1198,84 @@
   </div>
   <div class="notice-action">
     <button id="closeNotice" data-trans>Close</button>
+  </div>
+</div>
+<!-- 커스텀 모달 -->
+<div id="custom-modal" class="custom-modal">
+  <div class="modal-backdrop"></div>
+  <div class="modal-container">
+    <div class="modal-header">
+      <h3 id="modal-title">알림</h3>
+    </div>
+    <div class="modal-body">
+      <p id="modal-message"></p>
+      <div id="modal-input-area" class="modal-input-area">
+        <input type="text" id="modal-input" placeholder="" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="modal-cancel-btn" class="modal-btn cancel">취소</button>
+      <button id="modal-confirm-btn" class="modal-btn confirm">확인</button>
+    </div>
+  </div>
+</div>
+
+<!-- 학생 관리 패널 -->
+<div id="student-panel" class="collapsed">
+  <div id="panel-toggle">
+    <span class="toggle-icon">◀</span>
+    <span class="toggle-text">학생 관리</span>
+  </div>
+  <div id="panel-content">
+    <!-- 탭 메뉴 -->
+    <div class="panel-tabs">
+      <button class="tab-btn active" data-tab="class-tab">반 관리</button>
+      <button class="tab-btn" data-tab="parts-tab">파트 설정</button>
+    </div>
+
+    <!-- 반 관리 탭 -->
+    <div id="class-tab" class="tab-content active">
+      <!-- 반 추가 버튼 -->
+      <div class="add-class-section">
+        <button id="add-class-btn">새 반 추가</button>
+      </div>
+
+      <!-- 학생 추가 영역 -->
+      <div class="student-add-form">
+        <div class="form-row">
+          <select id="student-class-select">
+            <option value="">-- 반 선택 --</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <input type="text" id="student-name-input" placeholder="이름" />
+          <input type="number" id="student-value-input" placeholder="숫자" />
+          <button id="add-student-btn">추가</button>
+        </div>
+      </div>
+
+      <!-- 반별 학생 목록 (아코디언) -->
+      <div id="students-list">
+        <!-- 반별 학생 목록이 여기에 표시됩니다 -->
+      </div>
+    </div>
+
+    <!-- 파트 설정 탭 -->
+    <div id="parts-tab" class="tab-content">
+      <!-- 파트 설정 영역 -->
+      <div class="parts-config-section">
+        <h4>파트 범위 설정</h4>
+        <div class="parts-list" id="parts-list">
+          <!-- 파트 목록 -->
+        </div>
+        <button id="add-part-btn" class="add-part-btn">+ 파트 추가</button>
+      </div>
+
+      <!-- 파트별 학생 분류 표시 (모든 반) -->
+      <div id="students-by-parts">
+        <!-- 파트별로 학생이 표시됩니다 -->
+      </div>
+    </div>
   </div>
 </div>
 <div class="copyright">&copy; 2022-2025.<a href="https://lazygyu.net" target="_blank">lazygyu</a> <span data-trans>This program is freeware and may be used freely anywhere, including in broadcasts and videos.</span>
